@@ -1,25 +1,176 @@
 ---
 title: "Reproducible Research: Peer Assessment 1"
+author: "Chahid Azarkan"
 output: 
-  html_document:
-    keep_md: true
+html_document:
+keep_md: true
 ---
 
+## Setting the approriate defaults
+```{R}
+options(scipen=5)
+```
+
+
+## Loading libraries
+Load all the libraries that are needed to process the data.
+```{R, message=F, warning=F}
+library(data.table)
+library(ggplot2)
+library(lubridate)
+library(timeDate)
+library(dplyr)
+library(stringr)
+library(Amelia)
+```
 
 ## Loading and preprocessing the data
+First unzip the data, read in the data and than delete the unzipped file.
+```{R}
+unzip("activity.zip")
+activity <- read.csv("activity.csv")
+unlink("activity.csv")
+```
 
-
+Preprocess the data
+```{R}
+activity <- data.table(activity)
+activity$intervalp <- str_pad(activity$interval, 4, pad = "0")
+activity$datetime <- paste(activity$date, activity$intervalp)
+activity$datetime <- ymd_hm(activity$datetime)
+```
 
 ## What is mean total number of steps taken per day?
+Calculate the total number of steps taken per day.
+```{R}
+grouped <- na.omit(group_by(activity, date))
+sum.per.day <- summarise(grouped, sum.of.steps=sum(steps))
+sum.per.day$date <- ymd(sum.per.day$date)
+```
 
+Make a histogram of the total number of steps taken per day.
+```{R}
+qplot(sum.of.steps, data=sum.per.day, ylab = "Sum of Steps", xlab="Count", main = "Histogram of the total number of steps taken per day", bins="9")
+```
 
+Calculate the mean of the total number of steps taken per day.
+```{R}
+mean.steps <- mean(sum.per.day$sum.of.steps, na.rm=T)
+```
+
+The mean of the total number of steps taken per day is `r mean.steps`.
+
+Calculate the median of the total number of steps taken per day.
+```{R}
+median.steps <- median(sum.per.day$sum.of.steps, na.rm=T)
+```
+
+The median of the total number of steps taken per day is `r median.steps`.
 
 ## What is the average daily activity pattern?
+Calculate the average steps per interval.
+```{R}
+average.per.interval <- summarise(group_by(activity, interval), mean.of.steps=mean(steps, na.rm=T))
+```
 
+Make a plot of the average steps per interval.
+```{R}
+qplot(y=average.per.interval$mean.of.steps, x=average.per.interval$interval, data=average.per.interval, geom="path", xlab="Interval", ylab="Average steps per interval", main="Average daily activity pattern")
+```
 
+Which 5-minute interval, on average across all the days in the dataset, contains the maximum number of steps?
+
+```{R}
+# sort the data.table
+max <- average.per.interval[order(-rank(mean.of.steps))]
+```
+
+The 5-minute interval that, on average across all the days in the dataset, contains the maximum number of steps is `r max[[1,1]]`.
 
 ## Imputing missing values
+Calculate the total number of rows with missing data.
+```{R}
+missing.data <- sum(is.na(activity))
+```
+The total number of rows with missing data is `r missing.data`.
 
+The missing data is filled using the Amelia package in R.
+```{R results="hide"}
+# First the bounds need to be set.
+bds <- matrix(c(1, 0, 200), nrow = 1, ncol = 3)
 
+# Thereafter the imputation needs to run.
+x <- amelia(as.data.frame(activity), m = 1, ts = "datetime", idvars=c("date", "intervalp"), startvals=0, bounds=bds)
+```
+
+Create a new dataset that is equal to the original dataset but with the missing data filled in.
+
+```{R}
+imputed.activity <- activity
+imputed.activity$steps <- x$imputations[[1]]$steps
+```
+
+Make a histogram of the total number of steps taken each day. 
+
+```{R}
+imputed.activity.sum <- summarise(group_by(imputed.activity, date), sum.of.steps=sum(steps))
+
+qplot(sum.of.steps, data=imputed.activity.sum, ylab = "Sum of Steps", xlab="Count", main = "Histogram of the total number of steps taken per day (with imputed data)", bins="9")
+```
+
+Calculate and report the mean and median total number of steps taken per day.
+```{R}
+imputed.mean.steps <- mean(imputed.activity.sum$sum.of.steps, na.rm=T)
+imputed.median.steps <- median(imputed.activity.sum$sum.of.steps, na.rm=T)
+```
+
+With the imputed data, the mean of the total number of steps taken per day is `r imputed.mean.steps` and the median is `r imputed.median.steps`.
+
+Do these values differ from the estimates from the first part of the assignment? What is the impact of imputing missing data on the estimates of the total daily number of steps?
+
+The difference between the mean and median without imputed data is:
+
+* mean: `r imputed.mean.steps - mean.steps`;
+* median: `r imputed.median.steps - median.steps`.
+
+This means that, when you impute the missing data, the mean and median is higher. 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+First seperate the weekdays from the weekends.
+```{R}
+imputed.activity$weekday <- isWeekday(imputed.activity$date, wday=1:5)
+
+for(i in 1:nrow(imputed.activity)){
+        if(as.numeric(imputed.activity$weekday[i])==1){
+                imputed.activity$weekdayb[i] <- "Weekday"
+        } else {
+                imputed.activity$weekdayb[i] <- "Weekend"
+        }
+}
+
+weekday.imputed.activity <- subset(imputed.activity, weekdayb=="Weekday")
+weekend.imputed.activity <- subset(imputed.activity, weekdayb=="Weekend")
+```
+
+Calculate the average steps per interval.
+```{R}
+weekday.imputed.interval <- summarise(group_by(weekday.imputed.activity, interval), mean.of.steps=mean(steps, na.rm=T))
+
+weekday.imputed.interval$weekday <- "Weekday"
+
+
+weekend.imputed.interval <- summarise(group_by(weekend.imputed.activity, interval), mean.of.steps=mean(steps, na.rm=T))
+
+weekend.imputed.interval$weekday <- "Weekend"
+
+total.imputed.interval <- rbind(weekday.imputed.interval, weekend.imputed.interval)
+total.imputed.interval$weekday <- as.factor(total.imputed.interval$weekday)
+```
+
+Make a panel plot containing a time series plot of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all weekday days or weekend days (y-axis)
+
+```{R}
+qplot(y=mean.of.steps, x=interval, data=total.imputed.interval, xlab="Interval", ylab="Average steps per interval", main="Average daily activity pattern seperated for weekdays and weekends (using imputed data)", facets=weekday~., geom="path")
+```
+
